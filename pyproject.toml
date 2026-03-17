@@ -1,0 +1,40 @@
+[tool.uv]
+managed = true
+
+[project]
+name = "scaffold-m2p6-logistore"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+
+dependencies = [
+    # Core pipeline
+    "pydantic>=2.5.0",
+    "duckdb>=1.0.0",
+    "pandas>=2.0.0",
+    "pyarrow>=14.0.0",
+    "sqlalchemy>=1.4.36,<2.0",
+    "psycopg2-binary>=2.9.0",
+    "Faker>=25.0.0"
+]
+
+[project.optional-dependencies]
+# Airflow (installation locale hors Docker)
+airflow = [
+    "apache-airflow[postgres]==2.10.4"
+]
+# Tests & qualité
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0"
+]
+
+# Bonus dbt
+dbt = [
+    "dbt-duckdb>=1.9.0"
+]
+
+# Type `uv sync` to install dependancies, `uv sync --extra <dependancy_name>` to install a depencancy: for exemple `uv sync --extra test` to install
+# the packages related to "Tests & qualité ". 
