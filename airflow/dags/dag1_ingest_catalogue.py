@@ -18,6 +18,9 @@ from pathlib import Path
 from airflow.datasets import Dataset
 from airflow.decorators import dag, task
 
+import pandas as pd
+from contracts.catalogue_contract import get_catalogue_contract
+
 # Dataset Airflow partagé avec DAG 2
 CATALOGUE_DATASET = Dataset("file:///opt/airflow/data/curated/catalogue_snapshot.parquet")
 
@@ -54,13 +57,22 @@ def ingest_catalogue():
         2. Pour chaque ligne, déterminer la version du contrat (schema_version)
            et valider avec get_catalogue_contract(version)
         3. Séparer les lignes valides des lignes invalides
+
         4. Insérer/mettre à jour (UPSERT) les lignes valides dans PostgreSQL
         5. Sauvegarder les lignes invalides dans data/rejected/catalogue/
         6. Retourner un dict de stats : {valid: N, rejected: M}
         """
         if not filepath:
             return {"valid": 0, "rejected": 0, "skipped": True}
-        # TODO : implémenter
+        
+        df_validated, df_rejected = validate_flow(filepath, model_class)
+        4. Insérer/mettre à jour (UPSERT) les lignes valides dans PostgreSQL
+        save_valid_records(df_validated)
+        5. Sauvegarder les lignes invalides dans data/rejected/catalogue/
+        save_rejected_records(df_rejected)
+        # get_catalogue_contract("1.0")  # Test de récupération du contrat V1
+
+        
         raise NotImplementedError("validate_and_upsert_catalogue non implémenté")
 
     @task(outlets=[CATALOGUE_DATASET])

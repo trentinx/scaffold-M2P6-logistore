@@ -74,7 +74,7 @@ class CatalogueRecordV2(BaseModel):
     Les enregistrements V1 (sans supplier_id) restent valides.
     """
 
-    schema_version: Literal["2.0"]
+    schema_version: Literal["1.0", "2.0"]
     sku: str = Field(..., pattern=r"^SKU-\d{5}$")
     label: str = Field(..., min_length=3, max_length=200)
     category: CategoryEnum
