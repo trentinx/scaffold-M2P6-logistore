@@ -5,6 +5,9 @@ setup:
 	@echo "Setting up the project..."
 	$(MAKE) install
 	$(MAKE) fake_data
+	python -c "from contracts.catalogue_contract import CatalogueRecordV1; print('Contrats OK')"
+	pytest tests/ -v
+	
 	@echo "Setup complete."
 
 
@@ -18,7 +21,9 @@ install:
 
 fake_data:
 	@echo "Generating fake data..."
-	python scripts/generate_flows.py --palier small # 200 produits, 10 000 mouvements
-	python scripts/generate_flows.py --palier medium # 500 produits, 100 000 mouvements
-	python scripts/generate_flows.py --palier large # 1 000 produits, 1 000 000 mouvements
+	python scripts/generate_flows.py --palier small --orphan-ratio 0.20  # 200 produits, 10 000 mouvements, 20% de mouvements où le produit n'existe pas dans le catalogue
+# 	python scripts/generate_flows.py --palier small # 200 produits, 10 000 mouvements
+# 	python scripts/generate_flows.py --palier medium # 500 produits, 100 000 mouvements
+# 	python scripts/generate_flows.py --palier large # 1 000 produits, 1 000 000 mouvements
 	@echo "Fake data generation complete."
+	
