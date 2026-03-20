@@ -12,17 +12,36 @@ TODO étudiant : implémenter les fonctions marquées TODO ci-dessous.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
 from airflow.datasets import Dataset
 from airflow.decorators import dag, task
 
+import pandas as pd
+import psycopg2
+from psycopg2.extras import execute_values
+
+from contracts.catalogue_contract import get_catalogue_contract
+from contracts.catalogue_schema import get_catalogue_storage_columns
+from scripts.db_schema_manager import ensure_products_columns
+
 # Dataset Airflow partagé avec DAG 2
 CATALOGUE_DATASET = Dataset("file:///opt/airflow/data/curated/catalogue_snapshot.parquet")
 
 DATA_INBOX = Path("/opt/airflow/data/inbox/catalogue")
 DATA_CURATED = Path("/opt/airflow/data/curated")
+DATA_REJECTED = Path("/opt/airflow/data/rejected/catalogue")
+CATALOGUE_DB_COLUMNS = get_catalogue_storage_columns()
+
+POSTGRES_DSN = {
+    "host": os.getenv("POSTGRES_HOST", "postgres"),
+    "port": int(os.getenv("POSTGRES_PORT", 5432)),
+    "dbname": os.getenv("POSTGRES_DB", "logistore"),
+    "user": os.getenv("POSTGRES_USER", "logistore"),
+    "password": os.getenv("POSTGRES_PASSWORD", "logistore"),
+}
 
 
 @dag(
@@ -60,8 +79,56 @@ def ingest_catalogue():
         """
         if not filepath:
             return {"valid": 0, "rejected": 0, "skipped": True}
-        # TODO : implémenter
-        raise NotImplementedError("validate_and_upsert_catalogue non implémenté")
+
+        df = pd.read_csv(filepath)
+        valid_payloads = []
+        rejected_rows = []
+
+        for record in df.to_dict("records"):
+            normalized = {
+                column: None if pd.isna(value)
+                else str(value) if column == "schema_version"
+                else value
+                for column, value in record.items()
+            }
+            try:
+                version = str(normalized.get("schema_version"))
+                contract_cls = get_catalogue_contract(version)
+                payload = contract_cls(**normalized).model_dump(mode="python")
+                valid_payloads.append(payload)
+            except Exception as exc:
+                rejected_rows.append({**normalized, "rejection_reason": str(exc)})
+
+        if valid_payloads:
+            columns = CATALOGUE_DB_COLUMNS
+            values = [
+                tuple(payload.get(column) for column in columns)
+                for payload in valid_payloads
+            ]
+            set_clause = ", ".join(
+                f"{column} = EXCLUDED.{column}"
+                for column in columns
+                if column != "sku"
+            )
+            insert_columns = ", ".join(columns)
+            upsert_query = f"""
+                INSERT INTO products ({insert_columns})
+                VALUES %s
+                ON CONFLICT (sku) DO UPDATE SET
+                    {set_clause}
+            """
+            with psycopg2.connect(**POSTGRES_DSN) as conn:
+                ensure_products_columns(conn)
+                with conn.cursor() as cur:
+                    execute_values(cur, upsert_query, values)
+                conn.commit()
+
+        if rejected_rows:
+            DATA_REJECTED.mkdir(parents=True, exist_ok=True)
+            rejected_path = DATA_REJECTED / f"{Path(filepath).stem}_rejected_{datetime.utcnow():%Y%m%d%H%M%S}.csv"
+            pd.DataFrame(rejected_rows).to_csv(rejected_path, index=False)
+
+        return {"valid": len(valid_payloads), "rejected": len(rejected_rows), "skipped": False}
 
     @task(outlets=[CATALOGUE_DATASET])
     def export_catalogue_to_parquet(stats: dict) -> None:
