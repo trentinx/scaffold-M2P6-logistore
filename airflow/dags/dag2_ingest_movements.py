@@ -179,6 +179,16 @@ def ingest_movements():
                         conn.commit()
             except Exception as e:
                 print(f"Erreur lors de l'insertion des mouvements acceptés : {e}")
+            # Exporter les mouvements acceptés en Parquet en update le dataset existant si déjà présent
+            output_path = DATA_CURATED / "movements_history.parquet"
+            df_accepted = pd.DataFrame(accepted)
+            if output_path.exists():
+                df_existing = pd.read_parquet(output_path)
+                df_combined = pd.concat([df_existing, df_accepted], ignore_index=True)
+                df_combined.to_parquet(output_path, index=False)
+            else:
+                df_accepted.to_parquet(output_path, index=False)
+            
 
     filepath = load_movements_file()
     validation = validate_schema(filepath)
