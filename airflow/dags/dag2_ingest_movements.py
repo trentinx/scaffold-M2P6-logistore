@@ -18,6 +18,8 @@ TODO étudiant : implémenter les fonctions marquées TODO ci-dessous.
 from __future__ import annotations
 import pandas as pd
 import numpy as np
+import json
+
 
 from psycopg2.extras import execute_values
 from scripts.load_to_postgres import get_conn
@@ -155,6 +157,7 @@ def ingest_movements():
         3. Générer le rapport de rejet JSON si rejected_count > 0
         4. Le décorateur outlets=[MOVEMENTS_DATASET] déclenche DAG 3
         """
+        # Insérer les mouvements acceptés dans PostgreSQL
         accepted = routing_result.get("accepted")
         if len(accepted)>0:
             try:
@@ -179,7 +182,9 @@ def ingest_movements():
                         conn.commit()
             except Exception as e:
                 print(f"Erreur lors de l'insertion des mouvements acceptés : {e}")
+            
             # Exporter les mouvements acceptés en Parquet en update le dataset existant si déjà présent
+            DATA_CURATED.mkdir(parents=True, exist_ok=True)
             output_path = DATA_CURATED / "movements_history.parquet"
             df_accepted = pd.DataFrame(accepted)
             if output_path.exists():
@@ -188,6 +193,22 @@ def ingest_movements():
                 df_combined.to_parquet(output_path, index=False)
             else:
                 df_accepted.to_parquet(output_path, index=False)
+
+        # Générer le rapport de rejet JSON si nécessaire
+        rejected_count = routing_result.get("rejected_count", 0)
+        total = routing_result.get("total", 0)
+        if rejected_count > 0:
+            report = {
+                "timestamp": datetime.now().isoformat(),
+                "total_records": total,
+                "rejected_records": rejected_count,
+                "rejection_rate": rejected_count / total if total > 0 else 0,
+            }
+            report_path = DATA_REJECTED / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            DATA_REJECTED.mkdir(parents=True, exist_ok=True)
+            with open(report_path, "w") as f:
+                json.dump(report, f, indent=4, ensure_ascii=False)
+            print(f"Rapport de rejet généré : {report_path}")
             
 
     filepath = load_movements_file()
