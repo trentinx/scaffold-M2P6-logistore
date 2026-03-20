@@ -139,9 +139,18 @@ def ingest_catalogue():
         3. Le décorateur outlets=[CATALOGUE_DATASET] déclenche automatiquement DAG 2
         """
         DATA_CURATED.mkdir(parents=True, exist_ok=True)
+        snapshot_path = DATA_CURATED / "catalogue_snapshot.parquet"
         print(f"Stats ingestion : {stats}")
-        # TODO : implémenter
-        raise NotImplementedError("export_catalogue_to_parquet non implémenté")
+
+        with psycopg2.connect(**POSTGRES_DSN) as conn:
+            ensure_products_columns(conn)
+            df = pd.read_sql_query("SELECT * FROM products ORDER BY sku", conn)
+
+        if df.empty:
+            # Créer un fichier Parquet vide avec les colonnes connues
+            df = pd.DataFrame(columns=CATALOGUE_DB_COLUMNS)
+        df.to_parquet(snapshot_path, index=False)
+        print(f"Catalogue exporté vers {snapshot_path}")
 
     # Chaînage des tâches
     filepath = detect_new_catalogue_file()
