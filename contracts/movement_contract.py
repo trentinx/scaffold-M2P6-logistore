@@ -60,7 +60,7 @@ class MovementRecordV1(BaseModel):
             )
         return self
 
-    class Config:
+    class ConfigDict:
         json_schema_extra = {
             "example": {
                 "schema_version": "1.0",
