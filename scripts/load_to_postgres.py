@@ -96,7 +96,6 @@ def validate_flow(filepath, model_class):
             model_class(**record)
             valid_records.append(record)
         except Exception as e:
-            print(record)
             rejected_records.append({**record, "rejection_reason": str(e)})
     return pd.DataFrame(valid_records), pd.DataFrame(rejected_records)
 
