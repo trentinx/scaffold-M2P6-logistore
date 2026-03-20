@@ -3,7 +3,9 @@ from contextvars import ContextVar
 from types import ModuleType, SimpleNamespace
 
 import pandas as pd
-import pytest
+
+from airflow.dags import dag1_ingest_catalogue
+from airflow.dags.dag1_ingest_catalogue import ingest_catalogue
 
 # Stub the minimal Airflow APIs (datasets/decorators) needed to import the DAG
 datasets_stub = ModuleType("airflow.datasets")
@@ -93,8 +95,7 @@ sys.modules.setdefault("psycopg2", psycopg2_stub)
 sys.modules.setdefault("psycopg2.extras", psycopg2_extras_stub)
 sys.modules.setdefault("psycopg2.sql", psycopg2_sql_stub)
 
-from airflow.dags import dag1_ingest_catalogue
-from airflow.dags.dag1_ingest_catalogue import ingest_catalogue
+
 
 
 def test_validate_and_upsert_catalogue_stats(tmp_path, monkeypatch):

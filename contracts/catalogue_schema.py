@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Dict, List, Tuple, get_args, get_origin, Union
+from typing import Dict, List, get_args, get_origin, Union
 
 from contracts.catalogue_contract import CATALOGUE_CONTRACT_VERSIONS
 
