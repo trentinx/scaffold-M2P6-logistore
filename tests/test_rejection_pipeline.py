@@ -9,7 +9,7 @@ Ces tests vérifient que :
 NOTE : ces tests utilisent une base SQLite en mémoire pour
 être rapides et ne pas dépendre de PostgreSQL en CI.
 """
-import pytest
+#import pytest
 from datetime import datetime
 
 

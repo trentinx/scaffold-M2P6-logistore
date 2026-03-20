@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 import duckdb
-import pandas as pd
+#import pandas as pd
 from airflow.datasets import Dataset
 from airflow.decorators import dag, task
 
@@ -44,7 +44,7 @@ def inventory_analytics():
         Retourne le chemin du rapport généré.
         """
         movements_file = str(DATA_CURATED / "movements_history.parquet")
-        catalogue_file = str(DATA_CURATED / "catalogue_snapshot.parquet")
+        #catalogue_file = str(DATA_CURATED / "catalogue_snapshot.parquet")
 
         if not Path(movements_file).exists():
             print("Pas encore de fichier Parquet mouvements. Rien à calculer.")

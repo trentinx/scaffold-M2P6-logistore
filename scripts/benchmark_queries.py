@@ -6,12 +6,12 @@ Usage :
     python scripts/benchmark_queries.py --palier small --ci   # mode CI : sorties réduites
 """
 import argparse
-import os
+#import os
 import time
 from pathlib import Path
 
 import duckdb
-import pandas as pd
+#import pandas as pd
 
 
 QUERIES_PARQUET = {
