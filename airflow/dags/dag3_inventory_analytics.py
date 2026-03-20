@@ -44,7 +44,7 @@ def inventory_analytics():
         Retourne le chemin du rapport généré.
         """
         movements_file = str(DATA_CURATED / "movements_history.parquet")
-        #catalogue_file = str(DATA_CURATED / "catalogue_snapshot.parquet")
+        catalogue_file = str(DATA_CURATED / "catalogue_snapshot.parquet")
 
         if not Path(movements_file).exists():
             print("Pas encore de fichier Parquet mouvements. Rien à calculer.")
@@ -57,10 +57,23 @@ def inventory_analytics():
         # et calculer le stock_status (OK / WARNING / ALERT)
         stock_df = conn.execute(f"""
             SELECT
-                sku,
-                SUM(quantity) AS current_stock
-            FROM read_parquet('{movements_file}')
-            GROUP BY sku
+                movements.sku,
+                movements.current_stock,
+                catalogue.min_stock,
+            CASE
+                WHEN movements.current_stock = 0 THEN 'ALERT'
+                WHEN movements.current_stock < catalogue.min_stock THEN 'WARNING'
+                ELSE 'OK'
+            END AS stock_status
+            FROM 
+                (SELECT
+                    sku,
+                    SUM(quantity) AS current_stock
+                    FROM read_parquet('{movements_file}')            
+                    GROUP BY sku
+                ) As movements,
+                read_parquet('{catalogue_file}') As catalogue
+            WHERE movements.sku = catalogue.sku
             ORDER BY current_stock ASC
         """).df()
 
