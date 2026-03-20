@@ -8,10 +8,18 @@ Usage :
 """
 import argparse
 import os
-
-import psycopg2
 import pandas as pd
-from psycopg2.extras import execute_values
+
+import numpy as np
+
+# Import optionnel pour les opérations DB, pas nécessaire pour la validation des flux
+try:
+    import psycopg2
+    from psycopg2.extras import execute_values
+except ModuleNotFoundError:  # pragma: no cover - optional dependency for DB ops
+    psycopg2 = None
+    execute_values = None
+
 
 DSN = {
     "host": os.getenv("POSTGRES_HOST", "localhost"),
@@ -76,6 +84,21 @@ def init_db():
         conn.commit()
     print("✅ Tables créées (ou déjà existantes) : products, movements, rejected_movements")
 
+
+def validate_flow(filepath, model_class):
+    df = pd.read_csv(filepath, dtype={"schema_version": str})\
+           .replace({np.nan: None})
+    records = df.to_dict(orient="records")
+    valid_records = []
+    rejected_records = []
+    for record in records:
+        try:
+            model_class(**record)
+            valid_records.append(record)
+        except Exception as e:
+            print(record)
+            rejected_records.append({**record, "rejection_reason": str(e)})
+    return pd.DataFrame(valid_records), pd.DataFrame(rejected_records)
 
 def main():
     parser = argparse.ArgumentParser()
