@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from airflow.decorators import dag, task
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 
 @dag(
@@ -37,45 +38,91 @@ def replay_rejected_movements():
 
     @task
     def fetch_pending_rejected() -> list[dict]:
-        """
-        TODO étudiant :
-        1. Requête PostgreSQL : SELECT * FROM rejected_movements WHERE status='PENDING'
-        2. Retourner la liste des mouvements rejetés en attente
-        """
-        # TODO : implémenter
-        raise NotImplementedError("fetch_pending_rejected non implémenté")
+        hook = PostgresHook(postgres_conn_id="postgres_default")
+
+        records = hook.get_records("""
+        SELECT id, sku, quantity, movement_type, created_at
+        FROM rejected_movements
+        WHERE status = 'PENDING'
+        """)
+
+        columns = ["id", "sku", "quantity", "movement_type", "created_at"]
+
+        return [dict(zip(columns, row)) for row in records]
 
     @task
     def filter_now_known_skus(rejected: list[dict]) -> dict:
-        """
-        TODO étudiant :
-        1. Extraire la liste des SKUs uniques des rejected
-        2. Vérifier lesquels existent maintenant dans products
-        3. Séparer : replayable (SKU maintenant connu) vs still_pending
-        4. Retourner {replayable: [...], still_pending: [...], counts: {...}}
-        """
         if not rejected:
-            print("Aucun mouvement en attente de rejeu.")
             return {"replayable": [], "still_pending": [], "counts": {}}
-        # TODO : implémenter
-        raise NotImplementedError("filter_now_known_skus non implémenté")
+
+        hook = PostgresHook(postgres_conn_id="postgres_default")
+
+        skus = list({r["sku"] for r in rejected})
+
+        format_skus = ",".join(f"'{sku}'" for sku in skus)
+
+        query = f"""
+        SELECT sku FROM products
+        WHERE sku IN ({format_skus})
+        """
+
+        known = hook.get_records(query)
+        known_skus = {row[0] for row in known}
+
+        replayable = [r for r in rejected if r["sku"] in known_skus]
+        still_pending = [r for r in rejected if r["sku"] not in known_skus]
+
+        return {
+        "replayable": replayable,
+        "still_pending": still_pending,
+        "counts": {
+            "total": len(rejected),
+            "replayable": len(replayable),
+            "still_pending": len(still_pending),
+            },
+        }
 
     @task
     def replay_movements(result: dict) -> dict:
-        """
-        TODO étudiant :
-        1. Insérer result['replayable'] dans la table movements
-        2. UPDATE rejected_movements SET status='REPLAYED' pour ces lignes
-        3. Générer un rapport de rejeu
-        4. Retourner les stats
-        """
-        replayable = result.get("replayable", [])
-        if not replayable:
-            print("Aucun mouvement à rejouer.")
-            return {"replayed": 0, "still_pending": len(result.get("still_pending", []))}
-        # TODO : implémenter
-        raise NotImplementedError("replay_movements non implémenté")
+        hook = PostgresHook(postgres_conn_id="postgres_default")
 
+        replayable = result.get("replayable", [])
+        still_pending = result.get("still_pending", [])
+
+        if not replayable:
+            return {"replayed": 0, "still_pending": len(still_pending)}
+
+        conn = hook.get_conn()
+        cursor = conn.cursor()
+
+        # 1. Insert dans movements
+        for r in replayable:
+            cursor.execute("""
+                INSERT INTO movements (sku, quantity, movement_type, created_at)
+                VALUES (%s, %s, %s, %s)
+                """, (r["sku"], r["quantity"], r["movement_type"], r["created_at"]))
+
+        # 2. Update status
+        ids = [r["id"] for r in replayable]
+
+        cursor.execute("""
+            UPDATE rejected_movements
+            SET status = 'REPLAYED'
+            WHERE id = ANY(%s)
+            """, (ids,))
+
+        conn.commit()
+        cursor.close()
+
+        # 3. Rapport
+        report = {
+            "replayed": len(replayable),
+            "still_pending": len(still_pending),
+        }
+
+        print("Rapport de rejeu :", report)
+
+        return report
     pending = fetch_pending_rejected()
     filtered = filter_now_known_skus(pending)
     replay_movements(filtered)
