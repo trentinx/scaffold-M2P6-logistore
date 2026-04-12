@@ -1,6 +1,6 @@
 
 # Makefile for the inventory management system
-.PHONY: install fake_data
+.PHONY: install fake_data clean
 setup:
 	@echo "Setting up the project..."
 	$(MAKE) install
@@ -13,11 +13,15 @@ setup:
 
 install:
 	@echo "Installing the dependencies..."
-	python -m venv .venv && source .venv/bin/activate
-	uv sync
-	docker compose up -d # PostgreSQL + Airflow
-	python scripts/load_to_postgres.py --init	
+	uv venv .venv && source .venv/bin/activate
+	uv sync --extra test --extra airflow
+	find data -type d -exec chmod 777 {} +
+ 	docker compose up -d # PostgreSQL + Airflow
+	uv run python scripts/load_to_postgres.py --init	
 	@echo "Installation complete."
+
+
+
 
 fake_data:
 	@echo "Generating fake data..."

@@ -19,10 +19,11 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 import json
+import os
 
 
 from psycopg2.extras import execute_values
-from scripts.load_to_postgres import get_conn
+import psycopg2
 from datetime import datetime
 from pathlib import Path
 
@@ -38,7 +39,13 @@ DATA_INBOX = Path("/opt/airflow/data/inbox/movements")
 DATA_CURATED = Path("/opt/airflow/data/curated")
 DATA_REJECTED = Path("/opt/airflow/data/rejected")
 
-
+POSTGRES_DSN = {
+    "host": os.getenv("POSTGRES_HOST", "postgres"),
+    "port": int(os.getenv("POSTGRES_PORT", 5432)),
+    "dbname": os.getenv("POSTGRES_DB", "logistore"),
+    "user": os.getenv("POSTGRES_USER", "logistore"),
+    "password": os.getenv("POSTGRES_PASSWORD", "logistore"),
+}
 
 @dag(
     dag_id="ingest_movements",
@@ -106,7 +113,7 @@ def ingest_movements():
                   LEFT JOIN products ON products.sku = sku_table.sku
                   """
         try:
-            with get_conn() as conn:
+            with psycopg2.connect(**POSTGRES_DSN) as conn:
                 with conn.cursor() as cur:
                     results = execute_values(cur, request, sku_list, fetch=True )
                     sku_existence = {row[0]: row[1] for row in results}
