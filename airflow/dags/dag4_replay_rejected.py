@@ -20,6 +20,17 @@ from datetime import datetime
 
 from airflow.decorators import dag, task
 
+import os
+import psycopg2
+from psycopg2.extras import execute_values
+
+POSTGRES_DSN = {
+    "host": os.getenv("POSTGRES_HOST", "postgres"),
+    "port": int(os.getenv("POSTGRES_PORT", 5432)),
+    "dbname": os.getenv("POSTGRES_DB", "logistore"),
+    "user": os.getenv("POSTGRES_USER", "logistore"),
+    "password": os.getenv("POSTGRES_PASSWORD", "logistore"),
+}
 
 @dag(
     dag_id="replay_rejected_movements",
@@ -37,45 +48,101 @@ def replay_rejected_movements():
 
     @task
     def fetch_pending_rejected() -> list[dict]:
-        """
-        TODO étudiant :
-        1. Requête PostgreSQL : SELECT * FROM rejected_movements WHERE status='PENDING'
-        2. Retourner la liste des mouvements rejetés en attente
-        """
-        # TODO : implémenter
-        raise NotImplementedError("fetch_pending_rejected non implémenté")
+        with psycopg2.connect(**POSTGRES_DSN) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, movement_id, sku, quantity, movement_type, reason, occurred_at
+                    FROM rejected_movements
+                    WHERE status = 'PENDING'
+                    ORDER BY id
+                    """
+                )
+                rows = cur.fetchall()
+
+        columns = ["id", "movement_id", "sku", "quantity", "movement_type", "reason", "occurred_at"]
+        return [dict(zip(columns, row)) for row in rows]
 
     @task
     def filter_now_known_skus(rejected: list[dict]) -> dict:
-        """
-        TODO étudiant :
-        1. Extraire la liste des SKUs uniques des rejected
-        2. Vérifier lesquels existent maintenant dans products
-        3. Séparer : replayable (SKU maintenant connu) vs still_pending
-        4. Retourner {replayable: [...], still_pending: [...], counts: {...}}
-        """
         if not rejected:
-            print("Aucun mouvement en attente de rejeu.")
-            return {"replayable": [], "still_pending": [], "counts": {}}
-        # TODO : implémenter
-        raise NotImplementedError("filter_now_known_skus non implémenté")
+            return {"replayable": [], "still_pending": [], "counts": {"total": 0, "replayable": 0, "still_pending": 0}}
+
+        skus = list({r["sku"] for r in rejected})
+
+        with psycopg2.connect(**POSTGRES_DSN) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT sku
+                    FROM products
+                    WHERE sku = ANY(%s)
+                    """,
+                    (skus,),
+                )
+                known_skus = {row[0] for row in cur.fetchall()}
+
+        replayable = [r for r in rejected if r["sku"] in known_skus]
+        still_pending = [r for r in rejected if r["sku"] not in known_skus]
+
+        return {
+        "replayable": replayable,
+        "still_pending": still_pending,
+        "counts": {
+            "total": len(rejected),
+            "replayable": len(replayable),
+            "still_pending": len(still_pending),
+            },
+        }
 
     @task
     def replay_movements(result: dict) -> dict:
-        """
-        TODO étudiant :
-        1. Insérer result['replayable'] dans la table movements
-        2. UPDATE rejected_movements SET status='REPLAYED' pour ces lignes
-        3. Générer un rapport de rejeu
-        4. Retourner les stats
-        """
         replayable = result.get("replayable", [])
-        if not replayable:
-            print("Aucun mouvement à rejouer.")
-            return {"replayed": 0, "still_pending": len(result.get("still_pending", []))}
-        # TODO : implémenter
-        raise NotImplementedError("replay_movements non implémenté")
+        still_pending = result.get("still_pending", [])
 
+        if not replayable:
+            return {"replayed": 0, "still_pending": len(still_pending)}
+
+        with psycopg2.connect(**POSTGRES_DSN) as conn:
+            with conn.cursor() as cur:
+                insert_query = """
+                    INSERT INTO movements (movement_id, sku, movement_type, quantity, reason, occurred_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (movement_id) DO NOTHING
+                """
+                movement_payloads = [
+                    (
+                        r["movement_id"],
+                        r["sku"],
+                        r["movement_type"],
+                        r["quantity"],
+                        r["reason"],
+                        r["occurred_at"],
+                    )
+                    for r in replayable
+                ]
+                cur.executemany(insert_query, movement_payloads)
+
+                ids = [r["id"] for r in replayable]
+                cur.execute(
+                    """
+                    UPDATE rejected_movements
+                    SET status = 'REPLAYED', rejected_at = NOW()
+                    WHERE id = ANY(%s)
+                    """,
+                    (ids,),
+                )
+            conn.commit()
+
+        # 3. Rapport
+        report = {
+            "replayed": len(replayable),
+            "still_pending": len(still_pending),
+        }
+
+        print("Rapport de rejeu :", report)
+
+        return report
     pending = fetch_pending_rejected()
     filtered = filter_now_known_skus(pending)
     replay_movements(filtered)
