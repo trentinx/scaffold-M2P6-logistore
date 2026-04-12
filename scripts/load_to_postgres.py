@@ -8,9 +8,10 @@ Usage :
 """
 import argparse
 import os
-import pandas as pd
+from urllib.parse import urlparse
 
 import numpy as np
+import pandas as pd
 
 # Import optionnel pour les opérations DB, pas nécessaire pour la validation des flux
 try:
@@ -19,55 +20,51 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional dependency for DB ops
     psycopg2 = None
     execute_values = None
+    print("⚠️  psycopg2 n'est pas installé. Les opérations de base de données ne fonctionneront pas. Installez avec 'uv sync --extra db'.")
+
+
+def _parse_airflow_db_conn() -> dict[str, str | int | None]:
+    """Extract DB settings from AIRFLOW__DATABASE__SQL_ALCHEMY_CONN if available."""
+    conn_url = os.getenv("AIRFLOW__DATABASE__SQL_ALCHEMY_CONN")
+    if not conn_url:
+        return {}
+    try:
+        parsed = urlparse(conn_url)
+    except ValueError:
+        return {}
+    return {
+        "host": parsed.hostname,
+        "port": parsed.port,
+        "dbname": parsed.path.lstrip("/") if parsed.path else None,
+        "user": parsed.username,
+        "password": parsed.password,
+    }
+
+
+def _first_defined(*values):
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+_airflow_defaults = _parse_airflow_db_conn()
+
+from scripts.db_schema_manager import (
+    CREATE_MOVEMENTS_TABLE as CREATE_MOVEMENTS,
+    CREATE_PRODUCTS_TABLE as CREATE_PRODUCTS,
+    CREATE_REJECTED_MOVEMENTS_TABLE as CREATE_REJECTED_MOVEMENTS,
+)
 
 
 DSN = {
-    "host": os.getenv("POSTGRES_HOST", "localhost"),
-    "port": int(os.getenv("POSTGRES_PORT", 5432)),
-    "dbname": os.getenv("POSTGRES_DB", "logistore"),
-    "user": os.getenv("POSTGRES_USER", "logistore"),
-    "password": os.getenv("POSTGRES_PASSWORD", "logistore"),
+    "host": _first_defined(os.getenv("POSTGRES_HOST"), os.getenv("PGHOST"), _airflow_defaults.get("host"), "localhost"),
+    "port": int(_first_defined(os.getenv("POSTGRES_PORT"), os.getenv("PGPORT"), _airflow_defaults.get("port"), 5432)),
+    "dbname": _first_defined(os.getenv("POSTGRES_DB"), os.getenv("PGDATABASE"), _airflow_defaults.get("dbname"), "logistore"),
+    "user": _first_defined(os.getenv("POSTGRES_USER"), os.getenv("PGUSER"), _airflow_defaults.get("user"), "logistore"),
+    "password": _first_defined(os.getenv("POSTGRES_PASSWORD"), os.getenv("PGPASSWORD"), _airflow_defaults.get("password"), "logistore"),
 }
 
-CREATE_PRODUCTS = """
-CREATE TABLE IF NOT EXISTS products (
-    sku         VARCHAR(20)  PRIMARY KEY,
-    label       VARCHAR(200) NOT NULL,
-    category    VARCHAR(20)  NOT NULL,
-    unit        VARCHAR(10)  NOT NULL,
-    min_stock   INTEGER      NOT NULL DEFAULT 0,
-    supplier_id VARCHAR(50),
-    published_at TIMESTAMP   NOT NULL,
-    inserted_at  TIMESTAMP   DEFAULT NOW()
-);
-"""
-
-CREATE_MOVEMENTS = """
-CREATE TABLE IF NOT EXISTS movements (
-    movement_id   VARCHAR(36)  PRIMARY KEY,
-    sku           VARCHAR(20)  NOT NULL REFERENCES products(sku),
-    movement_type VARCHAR(10)  NOT NULL,
-    quantity      INTEGER      NOT NULL,
-    reason        TEXT,
-    occurred_at   TIMESTAMP    NOT NULL,
-    inserted_at   TIMESTAMP    DEFAULT NOW()
-);
-"""
-
-CREATE_REJECTED_MOVEMENTS = """
-CREATE TABLE IF NOT EXISTS rejected_movements (
-    id              SERIAL       PRIMARY KEY,
-    movement_id     VARCHAR(36),
-    sku             VARCHAR(20)  NOT NULL,
-    movement_type   VARCHAR(10),
-    quantity        INTEGER,
-    reason          TEXT,
-    occurred_at     TIMESTAMP,
-    rejection_reason TEXT        NOT NULL,
-    rejected_at     TIMESTAMP    DEFAULT NOW(),
-    status          VARCHAR(20)  DEFAULT 'PENDING'  -- PENDING | REPLAYED | ABANDONED
-);
-"""
 
 
 def get_conn():
