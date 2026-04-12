@@ -22,7 +22,6 @@ from airflow.decorators import dag, task
 
 import os
 import psycopg2
-from psycopg2.extras import execute_values
 
 POSTGRES_DSN = {
     "host": os.getenv("POSTGRES_HOST", "postgres"),
