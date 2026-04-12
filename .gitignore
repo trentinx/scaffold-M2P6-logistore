@@ -1,12 +1,8 @@
 # === Données volumineuses — ne jamais pusher ===
-data/inbox/catalogue/*.csv
-data/inbox/movements/*.csv
-data/raw/*.csv
-data/raw/*.parquet
-data/curated/*.parquet
-data/curated/*.csv
-data/rejected/*.csv
-data/rejected/reports/*.json
+data
+
+
+
 
 # Conserver les petits fichiers de test
 !tests/data/*.csv
