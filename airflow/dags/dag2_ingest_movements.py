@@ -22,6 +22,7 @@ import json
 
 
 from psycopg2.extras import execute_values
+from scripts.db_schema_manager import ensure_base_tables
 from scripts.load_to_postgres import get_conn
 from datetime import datetime
 from pathlib import Path
@@ -94,7 +95,11 @@ def ingest_movements():
         C'est le coeur du projet : gérer l'asynchronisme entre les deux flux.
         """
 
-        sku_list = list(((record["sku"],)for record in validation_result["valid_rows"]))
+        valid_rows = validation_result.get("valid_rows", [])
+        if not valid_rows:
+            return {"accepted": [], "rejected_count": 0, "total": 0}
+
+        sku_list = [(record["sku"],) for record in valid_rows]
         request = """
                   SELECT
                     sku_table.sku,
@@ -107,19 +112,20 @@ def ingest_movements():
                   """
         try:
             with get_conn() as conn:
+                ensure_base_tables(conn)
                 with conn.cursor() as cur:
-                    results = execute_values(cur, request, sku_list, fetch=True )
+                    results = execute_values(cur, request, sku_list, fetch=True)
                     sku_existence = {row[0]: row[1] for row in results}
 
                     accepted = []
                     rejected = []
-                    for record in validation_result["valid_rows"]:
+                    for record in valid_rows:
                         if sku_existence.get(record["sku"], 0) == 1:
                             accepted.append(record)
                         else:
                             rejected.append(record)
                     rejected_count = len(rejected)
-                    total = len(validation_result["valid_rows"])
+                    total = len(valid_rows)
 
                     if rejected_count > 0:
                         records = [
@@ -138,12 +144,11 @@ def ingest_movements():
                             INSERT INTO rejected_movements (movement_id, sku, movement_type, quantity, reason, occurred_at, rejection_reason)
                             VALUES %s
                         """
-                        execute_values(cur, insert_query,records)
+                        execute_values(cur, insert_query, records)
                         conn.commit()
             return {"accepted": accepted, "rejected_count": rejected_count, "total": total}
         except Exception as e:
-            print(f"Erreur lors de la vérification des SKUs : {e}")
-            return {"accepted": [], "rejected_count": 0, "total": 0}        
+            raise RuntimeError("Erreur lors de la vérification des SKUs") from e
                 
                 
 
@@ -159,9 +164,10 @@ def ingest_movements():
         """
         # Insérer les mouvements acceptés dans PostgreSQL
         accepted = routing_result.get("accepted")
-        if len(accepted)>0:
+        if len(accepted) > 0:
             try:
                 with get_conn() as conn:
+                    ensure_base_tables(conn)
                     with conn.cursor() as cur:
                         records = [
                             (
@@ -178,11 +184,11 @@ def ingest_movements():
                             INSERT INTO movements (movement_id, sku, movement_type, quantity, reason, occurred_at)
                             VALUES %s
                         """
-                        execute_values(cur, insert_query,records)
+                        execute_values(cur, insert_query, records)
                         conn.commit()
             except Exception as e:
-                print(f"Erreur lors de l'insertion des mouvements acceptés : {e}")
-            
+                raise RuntimeError("Erreur lors de l'insertion des mouvements acceptés") from e
+
             # Exporter les mouvements acceptés en Parquet en update le dataset existant si déjà présent
             DATA_CURATED.mkdir(parents=True, exist_ok=True)
             output_path = DATA_CURATED / "movements_history.parquet"
