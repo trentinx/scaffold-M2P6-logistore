@@ -19,7 +19,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from airflow.decorators import dag, task
-from airflow.providers.postgres.hooks.postgres import PostgresHook
+
+from scripts.db_schema_manager import ensure_base_tables
+from scripts.load_to_postgres import get_conn
 
 
 @dag(
@@ -38,36 +40,41 @@ def replay_rejected_movements():
 
     @task
     def fetch_pending_rejected() -> list[dict]:
-        hook = PostgresHook(postgres_conn_id="postgres_default")
+        with get_conn() as conn:
+            ensure_base_tables(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, movement_id, sku, quantity, movement_type, reason, occurred_at
+                    FROM rejected_movements
+                    WHERE status = 'PENDING'
+                    ORDER BY id
+                    """
+                )
+                rows = cur.fetchall()
 
-        records = hook.get_records("""
-        SELECT id, sku, quantity, movement_type, created_at
-        FROM rejected_movements
-        WHERE status = 'PENDING'
-        """)
-
-        columns = ["id", "sku", "quantity", "movement_type", "created_at"]
-
-        return [dict(zip(columns, row)) for row in records]
+        columns = ["id", "movement_id", "sku", "quantity", "movement_type", "reason", "occurred_at"]
+        return [dict(zip(columns, row)) for row in rows]
 
     @task
     def filter_now_known_skus(rejected: list[dict]) -> dict:
         if not rejected:
-            return {"replayable": [], "still_pending": [], "counts": {}}
-
-        hook = PostgresHook(postgres_conn_id="postgres_default")
+            return {"replayable": [], "still_pending": [], "counts": {"total": 0, "replayable": 0, "still_pending": 0}}
 
         skus = list({r["sku"] for r in rejected})
 
-        format_skus = ",".join(f"'{sku}'" for sku in skus)
-
-        query = f"""
-        SELECT sku FROM products
-        WHERE sku IN ({format_skus})
-        """
-
-        known = hook.get_records(query)
-        known_skus = {row[0] for row in known}
+        with get_conn() as conn:
+            ensure_base_tables(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT sku
+                    FROM products
+                    WHERE sku = ANY(%s)
+                    """,
+                    (skus,),
+                )
+                known_skus = {row[0] for row in cur.fetchall()}
 
         replayable = [r for r in rejected if r["sku"] in known_skus]
         still_pending = [r for r in rejected if r["sku"] not in known_skus]
@@ -84,35 +91,43 @@ def replay_rejected_movements():
 
     @task
     def replay_movements(result: dict) -> dict:
-        hook = PostgresHook(postgres_conn_id="postgres_default")
-
         replayable = result.get("replayable", [])
         still_pending = result.get("still_pending", [])
 
         if not replayable:
             return {"replayed": 0, "still_pending": len(still_pending)}
 
-        conn = hook.get_conn()
-        cursor = conn.cursor()
+        with get_conn() as conn:
+            ensure_base_tables(conn)
+            with conn.cursor() as cur:
+                insert_query = """
+                    INSERT INTO movements (movement_id, sku, movement_type, quantity, reason, occurred_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (movement_id) DO NOTHING
+                """
+                movement_payloads = [
+                    (
+                        r["movement_id"],
+                        r["sku"],
+                        r["movement_type"],
+                        r["quantity"],
+                        r["reason"],
+                        r["occurred_at"],
+                    )
+                    for r in replayable
+                ]
+                cur.executemany(insert_query, movement_payloads)
 
-        # 1. Insert dans movements
-        for r in replayable:
-            cursor.execute("""
-                INSERT INTO movements (sku, quantity, movement_type, created_at)
-                VALUES (%s, %s, %s, %s)
-                """, (r["sku"], r["quantity"], r["movement_type"], r["created_at"]))
-
-        # 2. Update status
-        ids = [r["id"] for r in replayable]
-
-        cursor.execute("""
-            UPDATE rejected_movements
-            SET status = 'REPLAYED'
-            WHERE id = ANY(%s)
-            """, (ids,))
-
-        conn.commit()
-        cursor.close()
+                ids = [r["id"] for r in replayable]
+                cur.execute(
+                    """
+                    UPDATE rejected_movements
+                    SET status = 'REPLAYED', rejected_at = NOW()
+                    WHERE id = ANY(%s)
+                    """,
+                    (ids,),
+                )
+            conn.commit()
 
         # 3. Rapport
         report = {
