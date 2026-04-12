@@ -168,7 +168,7 @@ def ingest_movements():
         accepted = routing_result.get("accepted")
         if len(accepted)>0:
             try:
-                with get_conn() as conn:
+                with psycopg2.connect(**POSTGRES_DSN) as conn:
                     with conn.cursor() as cur:
                         records = [
                             (
