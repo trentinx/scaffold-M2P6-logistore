@@ -9,7 +9,11 @@ Usage :
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import textwrap
 import time
 from dataclasses import dataclass
@@ -339,6 +343,51 @@ def build_markdown_table(summary: Dict[str, Dict[str, str]], palier_order: List[
     return "\n".join(rows)
 
 
+def extract_single_palier(summary: Dict[str, Dict[str, str]], palier: str) -> Dict[str, str]:
+    data: Dict[str, str] = {}
+    for row_key, values in summary.items():
+        if palier in values:
+            data[row_key] = values[palier]
+    return data
+
+
+def run_all_paliers(args) -> None:
+    combined: Dict[str, Dict[str, str]] = {}
+    processed: List[str] = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for palier in PALIERS:
+            json_path = Path(tmpdir) / f"{palier}.json"
+            cmd = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--palier",
+                palier,
+            ]
+            if args.ci:
+                cmd.append("--ci")
+            cmd.extend(
+                [
+                    "--json-output",
+                    str(json_path),
+                ]
+            )
+            subprocess.run(cmd, check=True)
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            processed.append(palier)
+            for row_key, value in data["rows"].items():
+                combined.setdefault(row_key, {})[palier] = value
+
+    markdown = build_markdown_table(combined, processed)
+    print("\n📋 Tableau récapitulatif\n")
+    print(markdown)
+
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown + "\n", encoding="utf-8")
+        print(f"\n📝 Tableau enregistré dans {output_path}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -349,9 +398,13 @@ def main():
     )
     parser.add_argument("--ci", action="store_true", help="Mode CI : skip si fichiers absents")
     parser.add_argument("--output", help="Enregistrer le tableau final (Markdown).")
+    parser.add_argument("--json-output", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    palier_list = list(PALIERS) if args.palier == "all" else [args.palier]
+    if args.palier == "all":
+        return run_all_paliers(args)
+
+    palier_list = [args.palier]
     summary: Dict[str, Dict[str, str]] = {}
     processed: List[str] = []
 
@@ -391,14 +444,20 @@ def main():
         return
 
     markdown = build_markdown_table(summary, processed)
-    print("\n📋 Tableau récapitulatif\n")
-    print(markdown)
+    if not args.json_output:
+        print("\n📋 Tableau récapitulatif\n")
+        print(markdown)
 
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(markdown + "\n", encoding="utf-8")
-        print(f"\n📝 Tableau enregistré dans {output_path}")
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(markdown + "\n", encoding="utf-8")
+            print(f"\n📝 Tableau enregistré dans {output_path}")
+
+    if args.json_output:
+        single = extract_single_palier(summary, processed[0])
+        payload = {"palier": processed[0], "rows": single}
+        Path(args.json_output).write_text(json.dumps(payload), encoding="utf-8")
 
 
 if __name__ == "__main__":
